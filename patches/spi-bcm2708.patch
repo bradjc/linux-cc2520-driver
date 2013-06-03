@@ -23,13 +23,13 @@ index 088cbaa..661a4cb 100644
 +static short processmode=1;
 +module_param(processmode,short,0);
 +MODULE_PARM_DESC(processmode,"Processing mode: 0=polling, 1=interrupt driven, 2=dma");
- 
+
  /* SPI register offsets */
  #define SPI_CS			0x00
 @@ -74,6 +82,37 @@
- 
+
  #define DRV_NAME	"bcm2708_spi"
- 
+
 +#define FLAGS_FIRST_TRANSFER 0x01
 +#define FLAGS_LAST_TRANSFER  0x02
 +
@@ -67,12 +67,12 @@ index 088cbaa..661a4cb 100644
 @@ -81,14 +120,24 @@ struct bcm2708_spi {
  	struct clk *clk;
  	bool stopping;
- 
+
 -	struct list_head queue;
 -	struct workqueue_struct *workq;
 -	struct work_struct work;
  	struct completion done;
- 
+
 -	const u8 *tx_buf;
 -	u8 *rx_buf;
 -	int len;
@@ -93,12 +93,12 @@ index 088cbaa..661a4cb 100644
 +	u64 transfers_irqdriven;
 +	u64 transfers_dmadriven;
  };
- 
+
  struct bcm2708_spi_state {
 @@ -132,75 +181,9 @@ static inline void bcm2708_wr(struct bcm2708_spi *bs, unsigned reg, u32 val)
  	writel(val, bs->base + reg);
  }
- 
+
 -static inline void bcm2708_rd_fifo(struct bcm2708_spi *bs, int len)
 -{
 -	u8 byte;
@@ -182,10 +182,10 @@ index 088cbaa..661a4cb 100644
 -			"mode %u: cs 0x%08X\n",
 -			hz, bus_hz, cdiv, bus_hz/cdiv, mode, cs);
  	}
- 
+
  	return 0;
  }
- 
+
 -static int bcm2708_process_transfer(struct bcm2708_spi *bs,
 -		struct spi_message *msg, struct spi_transfer *xfer)
 -{
@@ -211,7 +211,7 @@ index 088cbaa..661a4cb 100644
 +		d->chan,(unsigned long)d->base,d->irq);
 +	return 0;
 +}
- 
+
 -	if (bs->stopping)
 -		return -ESHUTDOWN;
 +static int bcm2708_release_dma(struct platform_device *pdev,
@@ -223,7 +223,7 @@ index 088cbaa..661a4cb 100644
 +	d->irq=0;
 +	return 0;
 +}
- 
+
 -	if (xfer->bits_per_word || xfer->speed_hz) {
 -		ret = bcm2708_setup_state(spi->master, &spi->dev, &state,
 -			xfer->speed_hz ? xfer->speed_hz : spi->max_speed_hz,
@@ -254,7 +254,7 @@ index 088cbaa..661a4cb 100644
 +        }
 +	return 0;
 +}
- 
+
 -		stp = &state;
 -	} else {
 -		stp = spi->controller_state;
@@ -269,7 +269,7 @@ index 088cbaa..661a4cb 100644
 +	bs->dma_buffer_handle=0;
 +	return 0;
 +}
- 
+
 -	INIT_COMPLETION(bs->done);
 -	bs->tx_buf = xfer->tx_buf;
 -	bs->rx_buf = xfer->rx_buf;
@@ -283,10 +283,10 @@ index 088cbaa..661a4cb 100644
 +
 +	/* and wake up the thread to continue its work - returning ...*/
 +	complete(&bs->done);
-+ 	/* return IRQ handled */
-+ 	return IRQ_HANDLED;
++	/* return IRQ handled */
++	return IRQ_HANDLED;
 +}
- 
+
 -	cs = stp->cs | SPI_CS_INTR | SPI_CS_INTD | SPI_CS_TA;
 +/* We could improve on DMA options, by chaining individual xfer messages
 +   into a more complex CB chain that takes care of all the transfers in one "go"
@@ -351,11 +351,11 @@ index 088cbaa..661a4cb 100644
 +	bs->rx_len=xfer->len;
 +	bs->tx_len=xfer->len;
 +	bs->cs=cs;
- 
+
 +	/* now set up the Registers */
  	bcm2708_wr(bs, SPI_CLK, stp->cdiv);
  	bcm2708_wr(bs, SPI_CS, cs);
- 
+
 -	ret = wait_for_completion_timeout(&bs->done,
 -			msecs_to_jiffies(SPI_TIMEOUT_MS));
 -	if (ret == 0) {
@@ -470,13 +470,13 @@ index 088cbaa..661a4cb 100644
 +		/* and wake up the thread to continue its work */
 +		complete(&bs->done);
 +	}
- 
+
 -	if (xfer->delay_usecs)
 -		udelay(xfer->delay_usecs);
 +	/* return IRQ handled */
 +	return IRQ_HANDLED;
 +}
- 
+
 -	if (list_is_last(&xfer->transfer_list, &msg->transfers) ||
 -			xfer->cs_change) {
 -		/* clear TA and interrupt flags */
@@ -504,7 +504,7 @@ index 088cbaa..661a4cb 100644
 +	if (!(flags | FLAGS_LAST_TRANSFER)) {
 +		bs->cs|=SPI_CS_INTR|SPI_CS_INTD;
  	}
- 
+
 -	msg->actual_length += (xfer->len - bs->len);
 +	/* set up the spinlock - do we really need to disable interrupts here?*/
 +	spin_lock_irqsave(&bs->lock,iflags);
@@ -513,7 +513,7 @@ index 088cbaa..661a4cb 100644
 +	cs=stp->cs|SPI_CS_TA|SPI_CS_INTR|SPI_CS_INTD;
 +	bcm2708_wr(bs, SPI_CLK, stp->cdiv);
 +	bcm2708_wr(bs, SPI_CS, cs);
- 
+
 +	/* fill as much of a buffer as possible */
 +	while ((bcm2708_rd(bs, SPI_CS)&SPI_CS_TXD)&&(bs->tx_len>0)) {
 +		/* store it if requested */
@@ -537,7 +537,7 @@ index 088cbaa..661a4cb 100644
 +	/* and return */
  	return 0;
  }
- 
+
 -static void bcm2708_work(struct work_struct *work)
 -{
 -	struct bcm2708_spi *bs = container_of(work, struct bcm2708_spi, work);
@@ -558,7 +558,7 @@ index 088cbaa..661a4cb 100644
 +	int rx_len=xfer->len;
 +
 +	struct bcm2708_spi *bs = spi_master_get_devdata(master);
- 
+
 -	spin_lock_irqsave(&bs->lock, flags);
 -	while (!list_empty(&bs->queue)) {
 -		msg = list_first_entry(&bs->queue, struct spi_message, queue);
@@ -597,7 +597,7 @@ index 088cbaa..661a4cb 100644
 +	/* and return OK */
 +	return 0;
 +}
- 
+
 -		list_for_each_entry(xfer, &msg->transfers, transfer_list) {
 -			status = bcm2708_process_transfer(bs, msg, xfer);
 -			if (status)
@@ -676,8 +676,8 @@ index 088cbaa..661a4cb 100644
 +		if (status)
 +			goto exit;
 +		/* delay if given */
-+	        if (xfer->delay_usecs)
-+        	        udelay(xfer->delay_usecs);
++		if (xfer->delay_usecs)
++			udelay(xfer->delay_usecs);
 +		/* and add up the result */
 +		msg->actual_length += xfer->len;
 +	}
@@ -686,30 +686,30 @@ index 088cbaa..661a4cb 100644
 +	spi_finalize_current_message(master);
 +	return status;
 +}
- 
+
 -		msg->status = status;
 -		msg->complete(msg->context);
 +static int bcm2708_prepare_transfer(struct spi_master *master) {
 +	return 0;
 +}
- 
+
 -		spin_lock_irqsave(&bs->lock, flags);
 -	}
 -	spin_unlock_irqrestore(&bs->lock, flags);
 +static int bcm2708_unprepare_transfer(struct spi_master *master) {
 +	return 0;
  }
- 
+
  static int bcm2708_spi_setup(struct spi_device *spi)
 @@ -357,11 +712,13 @@ static int bcm2708_spi_setup(struct spi_device *spi)
  	struct bcm2708_spi_state *state;
  	int ret;
- 
+
 +	// configure master
 +
  	if (bs->stopping)
  		return -ESHUTDOWN;
- 
+
  	if (!(spi->mode & SPI_NO_CS) &&
 -			(spi->chip_select > spi->master->num_chipselect)) {
 +		(spi->chip_select > spi->master->num_chipselect)) {
@@ -718,7 +718,7 @@ index 088cbaa..661a4cb 100644
  			spi->chip_select, spi->master->num_chipselect);
 @@ -378,12 +735,11 @@ static int bcm2708_spi_setup(struct spi_device *spi)
  	}
- 
+
  	ret = bcm2708_setup_state(spi->master, &spi->dev, state,
 -		spi->max_speed_hz, spi->chip_select, spi->mode,
 -		spi->bits_per_word);
@@ -729,12 +729,12 @@ index 088cbaa..661a4cb 100644
  		spi->controller_state = NULL;
 -                return ret;
  	}
- 
+
  	dev_dbg(&spi->dev,
 @@ -394,48 +750,6 @@ static int bcm2708_spi_setup(struct spi_device *spi)
  	return 0;
  }
- 
+
 -static int bcm2708_spi_transfer(struct spi_device *spi, struct spi_message *msg)
 -{
 -	struct bcm2708_spi *bs = spi_master_get_devdata(spi->master);
@@ -785,7 +785,7 @@ index 088cbaa..661a4cb 100644
  	struct spi_master *master;
  	struct bcm2708_spi *bs;
 +	const char* mode;
- 
+
  	regs = platform_get_resource(pdev, IORESOURCE_MEM, 0);
  	if (!regs) {
 @@ -484,40 +799,75 @@ static int __devinit bcm2708_spi_probe(struct platform_device *pdev)
@@ -801,15 +801,15 @@ index 088cbaa..661a4cb 100644
 +	master->unprepare_transfer_hardware     = bcm2708_unprepare_transfer;
 +
  	platform_set_drvdata(pdev, master);
- 
+
 -	bs = spi_master_get_devdata(master);
- 
+
 +	bs = spi_master_get_devdata(master);
  	spin_lock_init(&bs->lock);
 -	INIT_LIST_HEAD(&bs->queue);
  	init_completion(&bs->done);
 -	INIT_WORK(&bs->work, bcm2708_work);
- 
+
 +	/* set counters */
 +	bs->transfers_polling=0;
 +	bs->transfers_irqdriven=0;
@@ -821,7 +821,7 @@ index 088cbaa..661a4cb 100644
  		dev_err(&pdev->dev, "could not remap memory\n");
  		goto out_master_put;
  	}
- 
+
 -	bs->workq = create_singlethread_workqueue(dev_name(&pdev->dev));
 -	if (!bs->workq) {
 -		dev_err(&pdev->dev, "could not create workqueue\n");
@@ -831,7 +831,7 @@ index 088cbaa..661a4cb 100644
  	bs->irq = irq;
  	bs->clk = clk;
  	bs->stopping = false;
- 
+
 -	err = request_irq(irq, bcm2708_spi_interrupt, 0, dev_name(&pdev->dev),
 +	err = request_irq(irq,
 +			bcm2708_transfer_one_message_irqdriven_irqhandler,
@@ -871,7 +871,7 @@ index 088cbaa..661a4cb 100644
 -		goto out_workqueue;
 +		goto out_free_dma_tx;
  	}
- 
+
 +
  	/* initialise the hardware */
  	clk_enable(clk);
@@ -883,10 +883,10 @@ index 088cbaa..661a4cb 100644
 -		goto out_free_irq;
 +		goto out_free_dma_irq;
  	}
- 
+
  	dev_info(&pdev->dev, "SPI Controller at 0x%08lx (irq %d)\n",
  		(unsigned long)regs->start, irq);
- 
+
 +	/* now send the message over SPI */
 +	switch (processmode) {
 +	case 0:  mode="polling"; break;
@@ -919,7 +919,7 @@ index 088cbaa..661a4cb 100644
 @@ -551,19 +918,29 @@ static int __devexit bcm2708_spi_remove(struct platform_device *pdev)
  	struct spi_master *master = platform_get_drvdata(pdev);
  	struct bcm2708_spi *bs = spi_master_get_devdata(master);
- 
+
 +	/* first report on usage */
 +	dev_info(&pdev->dev,"SPI Bus statistics: %llu poll %llu interrupt and %llu dma driven messages\n",
 +		bs->transfers_polling,
@@ -934,12 +934,12 @@ index 088cbaa..661a4cb 100644
 -	spin_unlock_irq(&bs->lock);
 -
 -	flush_work_sync(&bs->work);
- 
+
  	clk_disable(bs->clk);
  	clk_put(bs->clk);
  	free_irq(bs->irq, master);
  	iounmap(bs->base);
- 
+
 +	/* release DMA */
 +	free_irq(bs->dma_rx.irq, master);
 +	bcm2708_release_dma(pdev,&bs->dma_tx);
@@ -948,10 +948,10 @@ index 088cbaa..661a4cb 100644
 +
 +	/* and unregister device */
  	spi_unregister_master(master);
- 
+
  	return 0;
 @@ -581,6 +958,10 @@ static struct platform_driver bcm2708_spi_driver = {
- 
+
  static int __init bcm2708_spi_init(void)
  {
 +        /* range check for processmode */
@@ -964,10 +964,10 @@ index 088cbaa..661a4cb 100644
 @@ -591,10 +972,9 @@ static void __exit bcm2708_spi_exit(void)
  }
  module_exit(bcm2708_spi_exit);
- 
+
 -
  //module_platform_driver(bcm2708_spi_driver);
- 
+
  MODULE_DESCRIPTION("SPI controller driver for Broadcom BCM2708");
 -MODULE_AUTHOR("Chris Boot <bootc@bootc.net>");
 +MODULE_AUTHOR("Chris Boot <bootc@bootc.net>, Martin Sperl");

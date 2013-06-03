@@ -56,6 +56,9 @@ sequences that don't have a predetermined length.
 
     cd linux
     git apply ../linux-cc2520-driver/patches/bcm2708.patch
+    cd drivers/spi
+    wget -r https://raw.github.com/raspberrypi/linux/91a3be5b2b783b930b2d7cdbf38283b613bce7d4/drivers/spi/spi-bcm2708.c
+    cd ../..
     git apply ../linux-cc2520-driver/patches/spi-bcm2708.patch
 
 #### Step Three: Compile the kernel
