@@ -9,7 +9,7 @@ obj-m += $(TARGET).o
 cc2520-objs = radio.o interface.o module.o platform.o sack.o lpl.o packet.o csma.o unique.o
 
 # Set this is your linux kernel checkout.
-KDIR := /home/androbin/rpi/linux
+KDIR := /home/bradjc/git/rpi-linux
 PWD := $(shell pwd)
 
 default:
