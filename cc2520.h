@@ -62,6 +62,7 @@
 #define CC2520_DEF_PAN 0x22
 #define CC2520_DEF_SHORT_ADDR 0x01
 #define CC2520_DEF_EXT_ADDR 0x01
+#define CC2520_DEF_SACK_IN_USE 0 // do not use software ack by default
 
 // All these timing parameters are in microseconds.
 #define CC2520_DEF_ACK_TIMEOUT 2500

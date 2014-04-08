@@ -297,6 +297,7 @@ void cc2520_radio_start()
 	cc2520_radio_writeRegister(CC2520_ADCTEST2, cc2520_adctest2_default.value);
 	cc2520_radio_writeRegister(CC2520_FIFOPCTRL, cc2520_fifopctrl_default.value);
 	cc2520_radio_writeRegister(CC2520_FRMCTRL0, cc2520_frmctrl0_default.value);
+	cc2520_radio_writeRegister(CC2520_FRMFILT0, cc2520_frmfilt0_default.value);
 	cc2520_radio_writeRegister(CC2520_FRMFILT1, cc2520_frmfilt1_default.value);
 	cc2520_radio_writeRegister(CC2520_SRCMATCH, cc2520_srcmatch_default.value);
 	cc2520_radio_unlock();

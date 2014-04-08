@@ -41,6 +41,7 @@ static u8 cur_rx_buf_len;
 
 static struct hrtimer timeout_timer;
 static int ack_timeout; //in microseconds
+static u8 use_software_ack;
 static int sack_state;
 static spinlock_t sack_sl;
 
@@ -81,6 +82,7 @@ int cc2520_sack_init()
 	sack_state = CC2520_SACK_IDLE;
 
 	ack_timeout = CC2520_DEF_ACK_TIMEOUT;
+	use_software_ack = CC2520_DEF_SACK_IN_USE;
 
 	return 0;
 
@@ -114,6 +116,11 @@ void cc2520_sack_free()
 void cc2520_sack_set_timeout(int timeout)
 {
 	ack_timeout = timeout;
+}
+
+void cc2520_sack_use_software_ack(u8 use_sack)
+{
+	use_software_ack = use_sack;
 }
 
 static void cc2520_sack_start_timer()
@@ -202,13 +209,16 @@ static void cc2520_sack_rx_done(u8 *buf, u8 len)
 		}
 	}
 	else {
-		if (cc2520_packet_requires_ack_reply(cur_rx_buf)) {
+		if (use_software_ack && cc2520_packet_requires_ack_reply(cur_rx_buf)) {
+			DBG((KERN_INFO "[cc2520] - need to send ACK.\n"));
 			if (sack_state == CC2520_SACK_IDLE) {
+				DBG((KERN_INFO "[cc2520] - creating ACK.\n"));
 				cc2520_packet_create_ack(cur_rx_buf, ack_buf);
 				sack_state = CC2520_SACK_TX_ACK;
 				spin_unlock_irqrestore(&sack_sl, flags);
 				sack_bottom->tx(ack_buf, IEEE154_ACK_FRAME_LENGTH + 1);
 				sack_top->rx_done(cur_rx_buf, cur_rx_buf_len);
+				DBG((KERN_INFO "[cc2520] - sent ACK.\n"));
 			}
 			else {
 				spin_unlock_irqrestore(&sack_sl, flags);
